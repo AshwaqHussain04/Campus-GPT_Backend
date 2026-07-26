@@ -1,0 +1,21 @@
+
+# Environment / secrets
+.env.local
+.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# LlamaIndex local storage (docstore, manifest — these are derived data, not source)
+app/storage/
+
+# Uploaded documents (optional — see note below)
+app/data/*
+!app/data/.gitkeep
+
+# Frontend (if using React/Node)
+node_modules/
+dist/
+build/

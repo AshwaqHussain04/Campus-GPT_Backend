@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+pymongo
+pydantic-settings
+llama-index-core
+llama-index-vector-stores-mongodb
+llama-index-embeddings-google-genai
+llama-index-llms-google-genai
+llama-index-retrievers-bm25
+google-genai
+pypdf
+certifi
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
