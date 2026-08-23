@@ -1,5 +1,7 @@
 import shutil
 import os
+from app.config import settings
+from app.mock_data import get_mock_query_response, MOCK_UPLOAD_RESPONSE
 
 from pathlib import Path
 
@@ -76,6 +78,11 @@ def looks_like_refusal(text: str) -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if settings.mock_mode:
+        print("Running in MOCK_MODE — skipping MongoDB connection and retriever setup.")
+        yield
+        return
+    
     if not ping():
         raise RuntimeError("Could not connect to MongoDB on startup. Check MONGODB_URI in .env.local")
 
@@ -92,7 +99,12 @@ app = FastAPI(title="CampusGPT API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -118,14 +130,23 @@ def health():
 def query(request: QueryRequest):
     if query_engine is None:
         raise HTTPException(status_code=503, detail="Query engine not ready yet")
-
     question = request.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="Question cannot be empty")
 
+
+    if settings.mock_mode:
+        mock = get_mock_query_response(question)
+        return QueryResponse(**mock)
+
+    if query_engine is None:
+        raise HTTPException(status_code=503, detail="Query engine not ready yet")
+    
     response = query_engine.query(question)
     source_nodes = response.source_nodes
     answer_text = str(response)
+
+    
 
     print(f"DEBUG: {len(source_nodes)} source nodes retrieved")
     for i, node in enumerate(source_nodes):
@@ -172,6 +193,9 @@ def upload_document(
 ):
     if not (file.filename.lower().endswith(".pdf") or file.filename.lower().endswith(".txt")):
         raise HTTPException(status_code=400, detail="Only .pdf and .txt files are supported")
+
+    if settings.mock_mode:
+        return UploadResponse(**{**MOCK_UPLOAD_RESPONSE, "filename": file.filename})
 
     dest_path = Path(DATA_DIR) / file.filename
     with open(dest_path, "wb") as f:

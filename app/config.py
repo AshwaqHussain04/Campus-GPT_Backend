@@ -2,6 +2,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    #For Testing Purposes
+    mock_mode: bool = False
+
     # Gemini
     gemini_api_key: str
 
