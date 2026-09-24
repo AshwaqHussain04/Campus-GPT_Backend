@@ -6,8 +6,9 @@ from app.mock_data import get_mock_query_response, MOCK_UPLOAD_RESPONSE
 from pathlib import Path
 
 from fastapi import Depends, File, UploadFile
+from pymongo.errors import DuplicateKeyError
 
-from app.auth import authenticate_admin, create_access_token, get_current_admin
+from app.auth import authenticate_admin, authenticate_student, create_access_token, get_current_admin, get_current_student, hash_password
 from app.ingest import (
     find_new_or_changed_files,
     ingest_with_retry,
@@ -29,7 +30,7 @@ from llama_index.core.settings import Settings as LlamaSettings
 from pydantic import BaseModel
 from llama_index.core.query_engine import RetrieverQueryEngine
 from app.rag_setup import configure_llama_settings, get_hybrid_retriever
-from app.db import ping
+from app.db import create_admin, create_chat_failed, create_chat_history, create_chat_pending, create_chat_success, create_student, ensure_user_indexes, ping
 from app.rag_setup import configure_llama_settings
 
 query_engine = None
@@ -54,14 +55,41 @@ REFUSAL_PHRASES = [
     "not covered in",
 ]
 
-class LoginRequest(BaseModel):
+class SignupRequest_Student(BaseModel):
+    regNo: int
+    password: str
+    email: str
+    name: str
+
+class SignupRequest_Admin(BaseModel):
+    name: str
+    password: str
+    email: str
+
+class SignupResponse_Admin(BaseModel):
+    access_token: str
+    token_type: str = "bearer"   
+
+class SignupResponse_Student(BaseModel):
+    access_token: str
+    token_type: str = "bearer"   
+
+class LoginRequest_Admin(BaseModel):
     username: str
     password: str
 
+class LoginRequest_Student(BaseModel):
+    email: str
+    password: str
 
-class LoginResponse(BaseModel):
+class LoginResponse_Admin(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+class LoginResponse_Student(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
 
 
 class UploadResponse(BaseModel):
@@ -85,6 +113,8 @@ async def lifespan(app: FastAPI):
     
     if not ping():
         raise RuntimeError("Could not connect to MongoDB on startup. Check MONGODB_URI in .env.local")
+
+    ensure_user_indexes()
 
     configure_llama_settings()
 
@@ -120,20 +150,28 @@ class QueryResponse(BaseModel):
     source: str  # "campus_documents" or "general_knowledge"
     sources_used: list[str] = []
 
-#route to check if the server is running and healthy. Returns a simple JSON response with status "ok".
+#6: route to check if the server is running and healthy. Returns a simple JSON response with status "ok".
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-#route for sending questions to the RAG system and getting answers back, along with the source of the answer (either "campus_documents" or "general_knowledge").
+#1: route for sending questions to the RAG system and getting answers back, along with the source of the answer (either "campus_documents" or "general_knowledge").
 @app.post("/query", response_model=QueryResponse)
-def query(request: QueryRequest):
+def query(
+    request: QueryRequest,
+    student: str = Depends(get_current_student),
+     ):
+
+    if(student is None):
+        raise HTTPException(status_code=401, detail="Proper authentication required")
+
     if query_engine is None:
         raise HTTPException(status_code=503, detail="Query engine not ready yet")
     question = request.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="Question cannot be empty")
 
+    chat_Id = create_chat_pending(student, question)
 
     if settings.mock_mode:
         mock = get_mock_query_response(question)
@@ -141,59 +179,106 @@ def query(request: QueryRequest):
 
     if query_engine is None:
         raise HTTPException(status_code=503, detail="Query engine not ready yet")
+    try: 
+        response = query_engine.query(question)
+        query = query_engine.query(question)
+        source_nodes = response.source_nodes
+        answer_text = str(response)
     
-    response = query_engine.query(question)
-    source_nodes = response.source_nodes
-    answer_text = str(response)
 
-    
+        print(f"DEBUG: {len(source_nodes)} source nodes retrieved")
+        for i, node in enumerate(source_nodes):
+            print(f"  [{i}] score={node.score}, file={node.node.metadata.get('file_name')}, text_preview={node.node.text[:80]!r}")
+            print(f"DEBUG: is_refusal={looks_like_refusal(answer_text)}")
 
-    print(f"DEBUG: {len(source_nodes)} source nodes retrieved")
-    for i, node in enumerate(source_nodes):
-        print(f"  [{i}] score={node.score}, file={node.node.metadata.get('file_name')}, text_preview={node.node.text[:80]!r}")
-        print(f"DEBUG: is_refusal={looks_like_refusal(answer_text)}")
+        has_any_match = len(source_nodes) > 0
+        is_refusal = looks_like_refusal(answer_text)
 
-    has_any_match = len(source_nodes) > 0
-    is_refusal = looks_like_refusal(answer_text)
+        if has_any_match and not is_refusal:
+            file_names = sorted({
+                node.node.metadata.get("file_name", "unknown") for node in source_nodes
+            })
+            create_chat_success(chat_Id, query, answer_text, "success")
+            return QueryResponse(
+                answer=answer_text,
+                source="campus_documents",
+                sources_used=file_names,
+            )
 
-    if has_any_match and not is_refusal:
-        file_names = sorted({
-            node.node.metadata.get("file_name", "unknown") for node in source_nodes
-        })
+        fallback = LlamaSettings.llm.complete(
+            f"Answer this question using your general knowledge: {question}"
+        )
+        create_chat_success(chat_Id, query, answer_text, "success")
+        create_chat_history(chat_Id, query, answer_text, "success")
         return QueryResponse(
-            answer=answer_text,
-            source="campus_documents",
-            sources_used=file_names,
+            answer=f"Note: this is not from official campus documents.\n\n{fallback.text}",
+            source="general_knowledge",
+            sources_used=[],
+        )
+        
+
+    except Exception:
+        create_chat_failed(chat_Id, query, "failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Sorry, I couldn't answer that right now."
         )
 
-    fallback = LlamaSettings.llm.complete(
-        f"Answer this question using your general knowledge: {question}"
-    )
-    return QueryResponse(
-        answer=f"Note: this is not from official campus documents.\n\n{fallback.text}",
-        source="general_knowledge",
-        sources_used=[],
-    )
+#2: Route for student signup. Accepts an email, password, and name, creates a new student record in the database, and returns a JWT access token if successful.
+@app.post("/auth/signupStudent", response_model=SignupResponse_Student)
+def signup(request: SignupRequest_Student):
+    try:
+        create_student(
+            request.regNo,
+            request.email,
+            hash_password(request.password),
+            request.name,
+        )
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="A student with that email already exists")
+    token = create_access_token(request.email, "student")
+    return SignupResponse_Student(access_token=token)
+
+#3: Route for admin signup. *TO ADD A SECRET MESSGAGE FOR ADMINS TO LOGIN Accepts a username and password creates a new admin record in the database, and returns a JWT access token if successful.
+@app.post("/auth/signupAdmin", response_model=SignupResponse_Admin)
+def signup_admin(
+    request: SignupRequest_Admin,
+    admin: str = Depends(get_current_admin),
+):
+    try:
+        create_admin(request.name, hash_password(request.password), request.email)
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="That admin username already exists")
+    token = create_access_token(request.name, "admin")
+    return SignupResponse_Admin(access_token=token)
 
 
-#Route for admin login. Accepts a username and password, verifies them against the stored admin credentials, and returns a JWT access token if successful.
-@app.post("/auth/login", response_model=LoginResponse)
-def login(request: LoginRequest):
+#4: Route for admin login. Accepts a username and password, verifies them against the stored admin credentials, and returns a JWT access token if successful.
+@app.post("/auth/loginAdmin", response_model=LoginResponse_Admin)
+def login(request: LoginRequest_Admin):
     if not authenticate_admin(request.username, request.password):
         raise HTTPException(status_code=401, detail="Incorrect username or password")
-    token = create_access_token(request.username)
-    return LoginResponse(access_token=token)
+    token = create_access_token(request.username, "admin")
+    return LoginResponse_Admin(access_token=token)
+
+#5: Route for student Login. Accepts an email and password *TO ADD REGISTRATION NUMBER CHECK
+@app.post("/auth/loginStudent", response_model=LoginResponse_Student)
+def login(request: LoginRequest_Student):
+    if not authenticate_student(request.email, request.password):
+        raise HTTPException(status_code=401, detail="Incorrect username or password")
+    token = create_access_token(request.email, "student")
+    return LoginResponse_Student(access_token=token)
 
 
-# route for admin to upload new documents (PDF or TXT) to the server, which will then be ingested and made available for querying.
+#6: route for admin to upload new documents (PDF or TXT) to the server, which will then be ingested and made available for querying.
 @app.post("/admin/upload", response_model=UploadResponse)
 def upload_document(
     file: UploadFile = File(...),
-    admin: str = Depends(get_current_admin),
+    admin: object = Depends(get_current_admin),
 ):
     if not (file.filename.lower().endswith(".pdf") or file.filename.lower().endswith(".txt")):
         raise HTTPException(status_code=400, detail="Only .pdf and .txt files are supported")
-
+    
     if settings.mock_mode:
         return UploadResponse(**{**MOCK_UPLOAD_RESPONSE, "filename": file.filename})
 

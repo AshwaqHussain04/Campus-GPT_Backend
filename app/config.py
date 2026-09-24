@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     mongodb_uri: str
     mongodb_db_name: str = "Campus-GPT_Data"
     mongodb_collection_name: str = "Study_Notes"
+    mongodb_collection_admin: str = "Admins"
+    mongodb_collection_student: str = "Students"
+    mongodb_collection_history: str = "History"
     mongodb_vector_index_name: str = "autoembed_index"
 
     # Embedding / chunking
