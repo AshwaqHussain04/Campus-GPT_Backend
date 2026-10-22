@@ -80,6 +80,11 @@ def load_documents_manually(paths: list[str]) -> list[Document]:
             print(f"Skipping unsupported file type: {path}")
             continue
 
+        if not text.strip():
+            raise ValueError(
+                f"{file_name} has no extractable text. Scanned PDFs need OCR before upload."
+            )
+
         documents.append(Document(text=text, metadata={"file_name": file_name}))
         print(f"Loaded {file_name}: {len(text)} characters")
 

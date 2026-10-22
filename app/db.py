@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+from bson import ObjectId
+from bson.errors import InvalidId
 from pymongo import MongoClient, AsyncMongoClient
 from pymongo.collection import Collection
 from pymongo.database import Database
@@ -75,53 +77,67 @@ def get_admin_by_username(username: str) -> dict | None:
         {"hashed_password": 0},
     )
 
-def create_chat_history(email: str, query: str, answer: str, status: str) -> str:
+def create_chat_pending(email: str, query: str) -> str:
+    now = datetime.now(timezone.utc)
     result = get_collection_history().insert_one({
         "email": email,
         "query" : query,
-        "answer" : answer,
-        "status" : status,
-        "created_at": datetime.now(timezone.utc),
+        "answer": None,
+        "status" : "pending",
+        "error": None,
+        "created_at": now,
+        "updated_at": now,
     })
     return str(result.inserted_id)
 
-def create_chat_pending(email: str, query: str, status: str) -> str:
-    result = get_collection_history().insert_one({
+def update_chat_success(chat_id: str, email: str, answer: str) -> None:
+    get_collection_history().update_one(
+        {"_id": ObjectId(chat_id), "email": email},
+        {"$set": {
+            "answer": answer,
+            "status": "completed",
+            "error": None,
+            "updated_at": datetime.now(timezone.utc),
+        }},
+    )
+
+
+def update_chat_failed(chat_id: str, email: str, error_message: str) -> None:
+    get_collection_history().update_one(
+        {"_id": ObjectId(chat_id), "email": email},
+        {"$set": {
+            "answer": None,
+            "status": "failed",
+            "error": error_message,
+            "updated_at": datetime.now(timezone.utc),
+        }},
+    )
+
+
+def get_chat_history(email: str, limit: int = 20) -> list[dict]:
+    return list(
+        get_collection_history()
+        .find({"email": email})
+        .sort("created_at", -1)
+        .limit(limit)
+    )
+
+
+def delete_chat_history_item(email: str, chat_id: str) -> bool:
+    try:
+        object_id = ObjectId(chat_id)
+    except InvalidId:
+        return False
+
+    result = get_collection_history().delete_one({
+        "_id": object_id,
         "email": email,
-        "query" : query,
-        "status": status,
-        "created_at": datetime.now(timezone.utc),
     })
-    return str(result.inserted_id)
-
-def create_chat_success(email: str, query: str, answer: str, status: str) -> str:
-    result = get_collection_history().insert_one({
-        "email": email,
-        "query" : query,
-        "answer" : answer,
-        "status" : status,
-        "created_at": datetime.now(timezone.utc),
-    })
-    return str(result.inserted_id)
-
-def create_chat_failed(email: str, query: str, status: str) -> str:
-    result = get_collection_history().insert_one({
-        "email": email,
-        "query" : query,
-        "status" : status,
-        "created_at": datetime.now(timezone.utc),
-    })
-    return str(result.inserted_id)
+    return result.deleted_count == 1
 
 
-def get_chat_history_email(email: str, query: str, answer: str) -> str:
-    result = get_collection_history().insert_one({
-        "email": email,
-        "query" : query,
-        "answer" : answer,
-        "created_at": datetime.now(timezone.utc),
-    })
-    return str(result.inserted_id)
+def ensure_history_indexes() -> None:
+    get_collection_history().create_index([("email", 1), ("created_at", -1)])
 
 
 def get_admin_for_login(username: str) -> dict | None:
@@ -131,6 +147,7 @@ def get_admin_for_login(username: str) -> dict | None:
 def ensure_user_indexes() -> None:
     get_collection_student().create_index("email", unique=True)
     get_collection_admin().create_index("username", unique=True)
+    ensure_history_indexes()
 
 def ping() -> bool:
     try:

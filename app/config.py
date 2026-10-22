@@ -7,6 +7,7 @@ class Settings(BaseSettings):
 
     # Gemini
     gemini_api_key: str
+    grok_api_key: str
 
     # MongoDB
     mongodb_uri: str
@@ -20,7 +21,7 @@ class Settings(BaseSettings):
     # Embedding / chunking
     embedding_model: str = "gemini-embedding-001"
     embedding_dimensions: int = 768    
-    llm_model: str = "gemini-flash-latest"   # was "models/gemini-1.5-flash"
+    llm_model: str = "openai/gpt-oss-20b"   # was "models/gemini-flash-latest" new too  Llama 3.1 8B Instant
     chunk_size: int = 1024   # was 512
     chunk_overlap: int = 100  # was 50
 

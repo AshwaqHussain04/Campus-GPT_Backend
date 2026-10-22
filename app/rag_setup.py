@@ -6,6 +6,7 @@ from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
 from llama_index.llms.google_genai import GoogleGenAI
 from llama_index.retrievers.bm25 import BM25Retriever
+from llama_index.llms.groq import Groq
 from llama_index.vector_stores.mongodb import MongoDBAtlasVectorSearch
 
 from app.config import settings
@@ -21,9 +22,9 @@ def configure_llama_settings() -> None:
     embedding_config={"output_dimensionality": settings.embedding_dimensions},
     embed_batch_size=50,   # fewer, larger requests instead of one-per-chunk
 )
-    LlamaSettings.llm = GoogleGenAI(
-        model=settings.llm_model,
-        api_key=settings.gemini_api_key,
+    LlamaSettings.llm = Groq(
+    model=settings.llm_model,  # or a smaller/faster variant
+    api_key=settings.grok_api_key,
     )
     LlamaSettings.node_parser = SentenceSplitter(
         chunk_size=settings.chunk_size,
