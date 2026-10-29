@@ -167,6 +167,7 @@ app = FastAPI(title="CampusGPT API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://campus-gpt-sandy.vercel.app",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:3000",
@@ -210,6 +211,11 @@ class ChatHistoryDeleteResponse(BaseModel):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/")
+def root():
+    return {"message": "CampusGPT API", "health": "/health"}
 
 
 @app.get("/chat/history", response_model=ChatHistoryResponse)
