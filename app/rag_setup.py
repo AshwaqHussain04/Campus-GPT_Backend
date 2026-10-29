@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from llama_index.core import StorageContext, VectorStoreIndex
+from llama_index.core.base.base_retriever import BaseRetriever
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.core.settings import Settings as LlamaSettings
@@ -42,17 +45,20 @@ def get_vector_store() -> MongoDBAtlasVectorSearch:
     )
 
 
-def get_hybrid_retriever(similarity_top_k: int = 5) -> QueryFusionRetriever:
+def get_hybrid_retriever(similarity_top_k: int = 5) -> BaseRetriever:
     """
     Combines dense vector search (MongoDB Atlas) with BM25 keyword search
-    (local docstore) using reciprocal rank fusion.
+    (local docstore) using reciprocal rank fusion when the local docstore exists.
     """
-    docstore = SimpleDocumentStore.from_persist_dir(STORAGE_DIR)
     vector_store = get_vector_store()
 
     vector_index = VectorStoreIndex.from_vector_store(vector_store)
     vector_retriever = vector_index.as_retriever(similarity_top_k=similarity_top_k)
 
+    if not Path(STORAGE_DIR, "docstore.json").is_file():
+        return vector_retriever
+
+    docstore = SimpleDocumentStore.from_persist_dir(STORAGE_DIR)
     bm25_retriever = BM25Retriever.from_defaults(
         docstore=docstore,
         similarity_top_k=similarity_top_k,
