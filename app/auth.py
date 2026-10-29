@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import hmac
 from typing import Literal
 
 import bcrypt
@@ -19,7 +20,17 @@ def hash_password(plain_password: str) -> str:
     return bcrypt.hashpw(plain_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
-def authenticate_admin(username: str, password: str) -> dict | bool:
+def verify_admin_secret(secret_key: str) -> bool:
+    return hmac.compare_digest(
+        secret_key.encode("utf-8"),
+        settings.admin_secret_key.encode("utf-8"),
+    )
+
+
+def authenticate_admin(username: str, password: str, secret_key: str) -> dict | bool:
+    if not verify_admin_secret(secret_key):
+        return False
+
     user = get_admin_for_login(username)
     if user:
         return user if verify_password(password, user["hashed_password"]) else False

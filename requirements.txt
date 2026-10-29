@@ -7,6 +7,7 @@ llama-index-core
 llama-index-vector-stores-mongodb
 llama-index-embeddings-google-genai
 llama-index-llms-google-genai
+llama-index-llms-groq
 llama-index-retrievers-bm25
 google-genai
 pypdf

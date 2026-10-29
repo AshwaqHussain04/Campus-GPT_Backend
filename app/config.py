@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 60
     admin_username: str
     admin_password_hash: str
+    admin_secret_key: str
 
     model_config = SettingsConfigDict(
         env_file=".env.local",

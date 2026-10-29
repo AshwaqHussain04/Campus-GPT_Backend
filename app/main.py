@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi import Depends, File, Query, UploadFile
 from pymongo.errors import DuplicateKeyError
 
-from app.auth import authenticate_admin, authenticate_student, create_access_token, get_current_admin, get_current_student, hash_password
+from app.auth import authenticate_admin, authenticate_student, create_access_token, get_current_admin, get_current_student, hash_password, verify_admin_secret
 from app.ingest import (
     find_new_or_changed_files,
     ingest_with_retry,
@@ -70,6 +70,7 @@ class SignupRequest_Admin(BaseModel):
     name: str
     password: str
     email: str
+    secret_key: str
 
 class SignupResponse_Admin(BaseModel):
     access_token: str
@@ -84,6 +85,7 @@ class SignupResponse_Student(BaseModel):
 class LoginRequest_Admin(BaseModel):
     username: str
     password: str
+    secret_key: str
 
 class LoginRequest_Student(BaseModel):
     email: str
@@ -338,11 +340,14 @@ def signup(request: SignupRequest_Student):
     token = create_access_token(request.email, "student")
     return SignupResponse_Student(access_token=token, name=request.name)
 
-#3: Route for admin signup. *TO ADD A SECRET MESSGAGE FOR ADMINS TO LOGIN Accepts a username and password creates a new admin record in the database, and returns a JWT access token if successful.
+#3: Route for admin signup. Creates an admin account only for users with the configured teacher secret.
 @app.post("/auth/signupAdmin", response_model=SignupResponse_Admin)
 def signup_admin(
     request: SignupRequest_Admin,
 ):
+    if not verify_admin_secret(request.secret_key):
+        raise HTTPException(status_code=403, detail="Invalid teacher secret key")
+
     try:
         create_admin(request.name, hash_password(request.password), request.email)
     except DuplicateKeyError:
@@ -354,9 +359,9 @@ def signup_admin(
 #4: Route for admin login. Accepts a username and password, verifies them against the stored admin credentials, and returns a JWT access token if successful.
 @app.post("/auth/loginAdmin", response_model=LoginResponse_Admin)
 def login(request: LoginRequest_Admin):
-    admin_user = authenticate_admin(request.username, request.password)
+    admin_user = authenticate_admin(request.username, request.password, request.secret_key)
     if not admin_user:
-        raise HTTPException(status_code=401, detail="Incorrect username or password")
+        raise HTTPException(status_code=401, detail="Incorrect username, password, or teacher secret key")
     admin_name = admin_user.get("username") if isinstance(admin_user, dict) else request.username
     token = create_access_token(request.username, "admin")
     return LoginResponse_Admin(access_token=token, name=admin_name)
